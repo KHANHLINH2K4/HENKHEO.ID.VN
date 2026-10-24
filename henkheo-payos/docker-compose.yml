@@ -1,0 +1,73 @@
+# Chạy toàn bộ hệ thống:  docker compose up -d --build
+# Cần file .env cùng thư mục (copy từ .env.docker.example).
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    command: ["node", "migrate.js"]
+    env_file: .env
+    environment:
+      DB_SERVER: db
+      DB_USER: sa            # migration cần quyền quản trị; tạo luôn tài khoản APP_DB_USER (chỉ đọc/ghi) nếu có khai báo
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DB_SERVER: db
+      # Ứng dụng chạy bằng tài khoản ít quyền (APP_DB_USER) nếu có; không có thì mới dùng sa.
+      DB_USER: ${APP_DB_USER:-sa}
+      DB_PASSWORD: ${APP_DB_PASSWORD:-${DB_PASSWORD}}
+      NODE_ENV: production
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5000/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # HTTPS tự động (Let's Encrypt) bằng Caddy. Bật bằng:  docker compose --profile https up -d
+  # Cần đặt DOMAIN trong .env và trỏ DNS về máy chủ (mở cổng 80/443).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  mssql_data:
+  caddy_data:
+  caddy_config:

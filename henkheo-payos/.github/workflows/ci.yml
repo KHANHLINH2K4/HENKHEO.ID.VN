@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  server:
+    name: Server (lint, unit test, audit)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: server } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  client:
+    name: Client (lint, build, audit)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: client } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: client/package-lock.json }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  integration:
+    name: Integration (SQL Server thật)
+    runs-on: ubuntu-latest
+    needs: [server, client]
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_Strong#Passw0rd1"
+        ports: ["1433:1433"]
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Strong#Passw0rd1' -Q 'SELECT 1'"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+    env:
+      DB_SERVER: localhost
+      DB_NAME: henkheo_ci
+      DB_USER: sa
+      DB_PASSWORD: "Ci_Strong#Passw0rd1"
+      DB_ENCRYPT: "false"
+      DB_TRUST_CERT: "true"
+      JWT_SECRET: ci_jwt_secret_ci_jwt_secret_ci_jwt_secret_0123456789
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: "Ci_Admin#12345"
+      PORT: "5000"
+    defaults: { run: { working-directory: server } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
+      - run: npm ci
+      - run: npm run db:seed
+      - run: npm run seed:admin
+      - name: Khởi động server
+        run: |
+          nohup node index.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs http://localhost:5000/api/live && break || sleep 2; done
+      - run: ADMIN_USER=admin API_URL=http://localhost:5000 npm run test:integration
+      - if: failure()
+        run: tail -n 100 server.log

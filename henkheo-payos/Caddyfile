@@ -1,0 +1,5 @@
+{$DOMAIN} {
+	encode gzip zstd
+	# WebSocket (Socket.IO) và API đều đi qua cùng một cổng
+	reverse_proxy app:5000
+}
