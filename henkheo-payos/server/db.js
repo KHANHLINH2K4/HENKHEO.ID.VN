@@ -1,32 +1,26 @@
-import "./config.js"; // đảm bảo .env đã nạp và TZ đã đặt trước khi tạo kết nối
-import sql from "mssql";
+import "./config.js"; // đảm bảo .env đã nạp và TZ đã đặt
+import pkg from 'pg';
+const { Pool } = pkg;
 
-const options = {
-  // Bật DB_ENCRYPT=true khi kết nối SQL Server từ xa/Azure. Localhost/Docker thì để false.
-  encrypt: String(process.env.DB_ENCRYPT || "false").toLowerCase() === "true",
-  trustServerCertificate: String(process.env.DB_TRUST_CERT || "true").toLowerCase() === "true",
-};
-if (process.env.DB_INSTANCE) {
-  options.instanceName = process.env.DB_INSTANCE; // vd: SQLEXPRESS
-}
+// Tạo kết nối Pool tới PostgreSQL / Supabase
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false // Bắt buộc để kết nối từ Render tới Supabase
+  },
+  max: Number(process.env.DB_POOL_MAX) || 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT) || 15000,
+});
 
-export function buildConfig(database = process.env.DB_NAME || "henkheo") {
-  const config = {
-    server: process.env.DB_SERVER || "localhost",
-    database,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    options,
-    pool: { max: Number(process.env.DB_POOL_MAX) || 10, min: 0, idleTimeoutMillis: 30000 },
-    requestTimeout: Number(process.env.DB_REQUEST_TIMEOUT) || 30000,
-    connectionTimeout: Number(process.env.DB_CONNECT_TIMEOUT) || 15000,
-  };
-  // Khi dùng instanceName, KHÔNG khai báo port (mssql tự dò qua SQL Browser).
-  if (!process.env.DB_INSTANCE) config.port = Number(process.env.DB_PORT) || 1433;
-  return config;
-}
+// Bắt lỗi kết nối background của Pool (nếu có)
+pool.on('error', (err) => {
+  console.error('Lỗi kết nối CSDL PostgreSQL:', err);
+});
 
-export const poolPromise = sql.connect(buildConfig());
-// Tránh "unhandled rejection" ồn ào khi DB chưa chạy; index.js sẽ await và báo lỗi rõ ràng.
+// Giữ nguyên export poolPromise để tương thích với code index.js hiện tại của bạn
+export const poolPromise = pool.connect();
 poolPromise.catch(() => {});
-export { sql };
+
+export { pool };
+export default pool;

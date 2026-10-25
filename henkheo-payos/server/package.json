@@ -25,6 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "mssql": "^11.0.1",
     "nodemailer": "^10.2.1",
+    "pg": "^8.23.1",
     "socket.io": "^4.8.1"
   },
   "engines": {
