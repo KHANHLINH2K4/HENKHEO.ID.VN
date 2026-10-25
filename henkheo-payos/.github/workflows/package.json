@@ -3,12 +3,11 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "lint": "eslint src"
-  },
+ "scripts": {
+  "start": "node migrate.js && node index.js",
+  "dev": "node index.js",
+  "db:migrate": "node migrate.js"
+},
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
     "@fontsource/space-grotesk": "^5.3.0",
