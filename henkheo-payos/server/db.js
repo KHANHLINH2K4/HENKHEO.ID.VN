@@ -18,9 +18,22 @@ pool.on('error', (err) => {
   console.error('Lỗi kết nối CSDL PostgreSQL:', err);
 });
 
-// Giữ nguyên export poolPromise để tương thích với code index.js hiện tại của bạn
 export const poolPromise = pool.connect();
 poolPromise.catch(() => {});
+
+// Bổ sung object `sql` giả lập để các file cũ gọi import { sql } không bị lỗi SyntaxError
+export const sql = {
+  query: async (queryText, params) => {
+    const client = await pool.connect();
+    try {
+      // Chuyển đổi cú pháp tham số từ @param sang $1, $2 nếu cần, hoặc chạy trực tiếp
+      const res = await client.query(queryText, params);
+      return res;
+    } finally {
+      client.release();
+    }
+  }
+};
 
 export { pool };
 export default pool;
