@@ -65,11 +65,10 @@ io.on("connection", (socket) => {
 setIO(io);
 
 // Số lớp reverse proxy tin cậy phía trước (Nginx = 1; Cloudflare + Nginx = 2; chạy trực tiếp = 0).
-// Đặt sai sẽ làm req.ip (rate limit, nhật ký) lấy nhầm IP nên cấu hình được bằng TRUST_PROXY.
 const trustProxy = process.env.TRUST_PROXY ?? "1";
 app.set("trust proxy", /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === "true" ? true : trustProxy === "false" ? false : trustProxy);
 
-// Mã yêu cầu + nhật ký truy cập (JSON ở production) để truy vết lỗi theo từng request.
+// Mã yêu cầu + nhật ký truy cập
 app.use((req, res, next) => {
   req.id = req.headers["x-request-id"] || crypto.randomUUID();
   res.setHeader("X-Request-Id", req.id);
@@ -84,11 +83,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Header bảo mật cơ bản (chống clickjacking, sniffing MIME, v.v.).
-// crossOriginResourcePolicy tắt vì client (Vite, cổng khác) cần gọi API qua CORS.
+// Header bảo mật cơ bản
 app.use(helmet({
   crossOriginResourcePolicy: false,
-  // CSP mặc định của helmet chặn Google Fonts / ảnh QR (data:) mà giao diện đang dùng.
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
@@ -103,10 +100,7 @@ app.use(helmet({
 app.use(cors({ origin: corsOrigin }));
 app.use(express.json({ limit: "1mb" }));
 
-/*
- * Rate limit: chặn brute-force đăng nhập/đăng ký và chặn spam chatbot.
- * Áp dụng ở tầng ứng dụng vì đồ án chạy trên máy/host đơn, chưa có API Gateway riêng.
- */
+// Rate limit
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
@@ -152,27 +146,24 @@ app.use("/api/staff-schedules", staffSchedulesRouter);
 app.use("/api/time-off", timeOffRouter);
 app.use("/api/payments", paymentsRouter);
 
-// Liveness: tiến trình còn sống (không đụng CSDL) — dùng cho Docker/K8s restart.
+// Liveness
 app.get("/api/live", (req, res) => res.json({ ok: true }));
 
-// Readiness: kiểm tra cả kết nối CSDL.
+// Readiness: kiểm tra kết nối CSDL PostgreSQL
 app.get("/api/health", async (req, res) => {
   try {
     const pool = await poolPromise;
-    await pool.request().query("SELECT 1 AS ok");
+    await pool.query("SELECT 1 AS ok");
     res.json({ ok: true, db: "up", message: "Hẹn Khéo API đang hoạt động", time: new Date().toISOString() });
   } catch (error) {
     res.status(503).json({ ok: false, db: "down", message: "Không kết nối được cơ sở dữ liệu." });
   }
 });
 
-// API không tồn tại -> 404 JSON (không trả HTML của giao diện).
+// API không tồn tại -> 404 JSON
 app.use("/api", (req, res) => res.status(404).json({ message: "Không tìm thấy API." }));
 
-/*
- * Production: server phục vụ luôn giao diện đã build (client/dist) -> chỉ cần 1 tiến trình, 1 cổng,
- * không cần CORS và webhook/return URL cùng một domain.
- */
+// Production: phục vụ giao diện client/dist
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, "../client/dist");
 if (fs.existsSync(path.join(clientDist, "index.html"))) {
@@ -180,8 +171,7 @@ if (fs.existsSync(path.join(clientDist, "index.html"))) {
   app.get(/^(?!\/(api|socket\.io)\/).*/, (req, res) => res.sendFile(path.join(clientDist, "index.html")));
 }
 
-// Bắt mọi lỗi chưa xử lý trong route (kể cả JSON body hỏng) và không lộ chi tiết nội bộ.
-// eslint-disable-next-line no-unused-vars
+// Bắt lỗi chung
 app.use((err, req, res, next) => {
   if (err?.type === "entity.parse.failed") return res.status(400).json({ message: "Dữ liệu gửi lên không phải JSON hợp lệ." });
   logger.error("Unhandled error", { err, id: req.id, path: req.path });
@@ -194,46 +184,42 @@ const PORT = Number(process.env.PORT) || 5000;
 let expireTimer = null;
 let jobsTimer = null;
 let purgeTimer = null;
+
 httpServer.listen(PORT, async () => {
   console.log(`✅ Hẹn Khéo server đang chạy tại http://localhost:${PORT} (TZ=${process.env.TZ}, ${isProduction ? "production" : "development"})`);
   try {
-    await poolPromise; // fail sớm, thông báo rõ nếu SQL Server chưa sẵn sàng
-    console.log("✅ Đã kết nối SQL Server.");
+    const pool = await poolPromise; // Lấy kết nối pool PostgreSQL
+    await pool.query("SELECT 1");
+    console.log("✅ Đã kết nối thành công với PostgreSQL (Supabase).");
+    
     const { pendingMigrations } = await import("./migrate.js");
-    const pending = await pendingMigrations(await poolPromise);
+    const pending = await pendingMigrations(pool);
     if (pending.length) {
       console.error("❌ Cơ sở dữ liệu chưa được cập nhật lên phiên bản mới. Còn thiếu:");
       for (const name of pending) console.error(`   - ${name}`);
-      console.error("   Hãy dừng server, chạy:  npm run db:migrate   rồi chạy lại  npm run dev");
+      console.error("   Hãy dừng server, chạy:  npm run db:migrate  rồi chạy lại  npm run dev");
       process.exit(1);
     }
   } catch (error) {
-    console.error("❌ Không kết nối được SQL Server:", error.message);
+    console.error("❌ Không kết nối được cơ sở dữ liệu:", error.message);
     process.exit(1);
-  }
-  // Chốt chặn CSDL chống trùng giờ phải tồn tại (migration 006 có thể bỏ qua nếu dữ liệu cũ bị trùng).
-  try {
-    const idx = await (await poolPromise).request().query("SELECT 1 AS ok FROM sys.indexes WHERE name='UX_appointments_staff_slot_active'");
-    if (!idx.recordset.length) {
-      logger.error("THIẾU chỉ mục UX_appointments_staff_slot_active: chống trùng giờ chỉ còn dựa vào kiểm tra trong transaction. Hãy xử lý lịch trùng giờ rồi chạy lại npm run db:migrate.");
-      if (isProduction && process.env.ALLOW_MISSING_SLOT_INDEX !== "true") process.exit(1);
-    }
-  } catch (error) {
-    logger.warn("Không kiểm tra được chỉ mục chống trùng giờ", { err: error });
   }
 
   if (String(process.env.ENABLE_BACKGROUND_JOBS ?? "true").toLowerCase() === "false") {
-    logger.info("Việc nền đang TẮT (ENABLE_BACKGROUND_JOBS=false) — hãy bảo đảm có instance khác chạy việc nền.");
+    console.log("Việc nền đang TẮT (ENABLE_BACKGROUND_JOBS=false) — hãy bảo đảm có instance khác chạy việc nền.");
     return;
   }
-  // Việc nền có khóa CSDL: nhiều instance cùng chạy thì mỗi lần chỉ một nơi thực hiện.
+
+  // Việc nền có khóa CSDL
   const payJob = () => withJobLock("expire-payos", expirePendingPayOSPayments);
   await payJob();
   expireTimer = setInterval(payJob, 60 * 1000);
+
   const runJobs = () => withJobLock("housekeeping", async () => { await expireUnconfirmedStoreAppointments(); await sendAppointmentReminders(); });
   await runJobs();
   jobsTimer = setInterval(runJobs, 5 * 60 * 1000);
-  // Dọn dữ liệu quá hạn lưu trữ mỗi 6 giờ.
+
+  // Dọn dữ liệu quá hạn mỗi 6 giờ
   const purge = () => withJobLock("purge", purgeOldData);
   await purge();
   purgeTimer = setInterval(purge, 6 * 60 * 60 * 1000);
@@ -246,7 +232,10 @@ async function shutdown(signal) {
   if (purgeTimer) clearInterval(purgeTimer);
   io.close();
   httpServer.close(async () => {
-    try { (await poolPromise).close(); } catch {}
+    try { 
+      const pool = await poolPromise;
+      if (pool && pool.end) await pool.end(); 
+    } catch {}
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10_000).unref();
