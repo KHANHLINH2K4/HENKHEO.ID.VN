@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch index.js",
-    "start": "node index.js",
+    "start": "node migrate.js && node index.js",
+  "dev": "node index.js",
+  "db:migrate": "node migrate.js",
     "db:migrate": "node migrate.js",
     "db:seed": "node migrate.js --seed",
     "seed:admin": "node seed-admin.js",
