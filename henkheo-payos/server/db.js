@@ -18,3 +18,11 @@ export const sql = {
     return await pool.query(text, params);
   }
 };
+
+// Bổ sung hàm buildConfig để tương thích với các module đang gọi import
+export const buildConfig = () => {
+  return {
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  };
+};
