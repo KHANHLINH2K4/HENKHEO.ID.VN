@@ -1,16 +1,3 @@
-/*
- * Bộ chạy migration CSDL tự động (thay cho việc mở từng file .sql trong SSMS).
- *
- *   npm run db:migrate            -> tạo database (nếu chưa có), chạy các migration còn thiếu
- *   npm run db:migrate -- --seed  -> như trên + nạp dữ liệu mẫu (categories, dịch vụ, nhân viên demo)
- *
- * - Mỗi file chỉ chạy đúng 1 lần, ghi nhận trong bảng dbo.schema_migrations.
- * - File được tách theo dòng "GO" (cú pháp của SSMS, SQL Server không hiểu GO khi gửi qua driver).
- * - An toàn khi chạy lại nhiều lần.
- * - Các file legacy đã bị hợp nhất (migration_operational_v2/v3, migration_payments,
- *   migration_final_features, migration_price_at_booking) và file phá dữ liệu
- *   (fix_staff_schedule_08_18.sql) KHÔNG nằm trong danh sách này.
- */
 import "./config.js";
 import pkg from 'pg';
 import fs from 'fs';
@@ -28,7 +15,7 @@ const pool = new Pool({
 async function runMigrations() {
   console.log("🚀 Bắt đầu chạy migration lên PostgreSQL (Supabase)...");
   
-  const migrationsDir = path.join(__dirname, 'migrations'); // hoặc thư mục chứa file sql của bạn
+  const migrationsDir = path.join(__dirname, 'migrations');
   if (!fs.existsSync(migrationsDir)) {
     console.log("⚠️ Không tìm thấy thư mục migrations, bỏ qua bước migrate.");
     process.exit(0);
@@ -43,8 +30,13 @@ async function runMigrations() {
     for (const file of files) {
       console.log(`📂 Đang chạy migration: ${file}`);
       const filePath = path.join(migrationsDir, file);
-      const sqlQuery = fs.readFileSync(filePath, 'utf8');
-      await client.query(sqlQuery);
+      let rawSql = fs.readFileSync(filePath, 'utf8');
+
+      // Loại bỏ các từ khóa hoặc dòng lệnh không tương thích với Postgres nếu có (như GO)
+      rawSql = rawSql.replace(/^\s*GO\s*$/gim, '');
+
+      // Thực thi toàn bộ câu lệnh SQL an toàn trên Postgres
+      await client.query(rawSql);
       console.log(`✅ Hoàn thành: ${file}`);
     }
     console.log("🎉 Tất cả các migration đã chạy thành công!");
